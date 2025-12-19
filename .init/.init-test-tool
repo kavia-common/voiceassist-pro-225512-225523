@@ -1,0 +1,4 @@
+{
+    "command": "mongosh --host localhost --port 5000 --eval \"db.adminCommand(ping)\"",
+    "working_directory": "/home/kavia/workspace/code-generation/voiceassist-pro-225512-225523/data_store"
+}
