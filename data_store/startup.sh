@@ -1,10 +1,50 @@
 #!/bin/bash
 
-# MongoDB startup script following the same pattern
-DB_NAME="myapp"
-DB_USER="appuser"
-DB_PASSWORD="dbuser123"
-DB_PORT="5000"
+# MongoDB startup script with standardized env vars
+# Prefer environment variables MONGODB_URL and MONGODB_DB; fall back to defaults
+DB_NAME_DEFAULT="myapp"
+DB_USER_DEFAULT="appuser"
+DB_PASSWORD_DEFAULT="dbuser123"
+DB_PORT_DEFAULT="5000"
+
+# If MONGODB_URL provided, parse components; otherwise derive from defaults
+MONGODB_URL="${MONGODB_URL:-}"
+MONGODB_DB="${MONGODB_DB:-}"
+
+# Initialize from defaults
+DB_NAME="${MONGODB_DB:-$DB_NAME_DEFAULT}"
+DB_USER="$DB_USER_DEFAULT"
+DB_PASSWORD="$DB_PASSWORD_DEFAULT"
+DB_PORT="$DB_PORT_DEFAULT"
+DB_HOST="localhost"
+AUTH_DB="admin"
+
+# Parse MONGODB_URL if set (simple parser for form: mongodb://user:pass@host:port[/db]?authSource=admin)
+if [ -n "$MONGODB_URL" ]; then
+  # Extract user:pass
+  CREDS=$(echo "$MONGODB_URL" | sed -n 's#^mongodb://\\([^/@]*\\)@.*#\\1#p')
+  if [ -n "$CREDS" ]; then
+    DB_USER=$(echo "$CREDS" | cut -d: -f1)
+    DB_PASSWORD=$(echo "$CREDS" | cut -d: -f2)
+  fi
+  # Extract host:port
+  HOSTPORT=$(echo "$MONGODB_URL" | sed -n 's#^mongodb://[^@]*@\\([^/]*\\).*#\\1#p')
+  if [ -n "$HOSTPORT" ]; then
+    DB_HOST=$(echo "$HOSTPORT" | cut -d: -f1)
+    DB_PORT=$(echo "$HOSTPORT" | cut -d: -f2)
+    DB_PORT="${DB_PORT:-$DB_PORT_DEFAULT}"
+  fi
+  # Extract db if present in URL path and not overridden
+  URL_DB=$(echo "$MONGODB_URL" | sed -n 's#^mongodb://[^/]*/\\([^?]*\\).*#\\1#p')
+  if [ -n "$URL_DB" ] && [ "$URL_DB" != "$MONGODB_URL" ]; then
+    DB_NAME="$URL_DB"
+  fi
+  # Extract authSource
+  AUTH_DB_VAL=$(echo "$MONGODB_URL" | sed -n 's#.*authSource=\\([^&]*\\).*#\\1#p')
+  if [ -n "$AUTH_DB_VAL" ]; then
+    AUTH_DB="$AUTH_DB_VAL"
+  fi
+fi
 
 echo "Starting MongoDB setup..."
 
@@ -13,7 +53,7 @@ if mongosh --port ${DB_PORT} --eval "db.adminCommand('ping')" > /dev/null 2>&1; 
     echo "MongoDB is already running on port ${DB_PORT}!"
     
     # Try to verify the database exists and user can connect
-    if mongosh mongodb://${DB_USER}:${DB_PASSWORD}@localhost:${DB_PORT}/${DB_NAME}?authSource=admin --eval "db.getName()" > /dev/null 2>&1; then
+    if mongosh mongodb://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?authSource=${AUTH_DB} --eval "db.getName()" > /dev/null 2>&1; then
         echo "Database ${DB_NAME} is accessible with user ${DB_USER}."
     else
         echo "MongoDB is running but authentication might not be configured."
@@ -32,7 +72,7 @@ if mongosh --port ${DB_PORT} --eval "db.adminCommand('ping')" > /dev/null 2>&1; 
         echo "$(cat db_connection.txt)"
     else
         echo "To connect to the database, use:"
-        echo "mongosh mongodb://${DB_USER}:${DB_PASSWORD}@localhost:${DB_PORT}/${DB_NAME}?authSource=admin"
+        echo "mongosh mongodb://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?authSource=${AUTH_DB}"
     fi
     
     echo ""
@@ -113,13 +153,14 @@ if (db.getUser("appuser") == null) {
 print("MongoDB setup complete!");
 EOF
 
-# Save connection command to a file
-echo "mongosh mongodb://${DB_USER}:${DB_PASSWORD}@localhost:${DB_PORT}/${DB_NAME}?authSource=admin" > db_connection.txt
+# Save connection command to a file (db_connection.txt) using standardized URL
+CONNECTION_URL="mongodb://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?authSource=${AUTH_DB}"
+echo "mongosh ${CONNECTION_URL}" > db_connection.txt
 echo "Connection string saved to db_connection.txt"
 
-# Save environment variables to a file
+# Save environment variables to a file for db visualizer
 cat > db_visualizer/mongodb.env << EOF
-export MONGODB_URL="mongodb://${DB_USER}:${DB_PASSWORD}@localhost:${DB_PORT}/?authSource=admin"
+export MONGODB_URL="mongodb://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/?authSource=${AUTH_DB}"
 export MONGODB_DB="${DB_NAME}"
 EOF
 
@@ -134,7 +175,7 @@ echo "Environment variables saved to db_visualizer/mongodb.env"
 echo "To use with Node.js viewer, run: source db_visualizer/mongodb.env"
 
 echo "To connect to the database, use one of the following commands:"
-echo "mongosh -u ${DB_USER} -p ${DB_PASSWORD} --port ${DB_PORT} --authenticationDatabase admin ${DB_NAME}"
+echo "mongosh -u ${DB_USER} -p ${DB_PASSWORD} --port ${DB_PORT} --authenticationDatabase ${AUTH_DB} ${DB_NAME}"
 echo "$(cat db_connection.txt)"
 
 # MongoDB continues running in background
